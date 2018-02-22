@@ -70,63 +70,64 @@ namespace DistributedHE
 	using namespace dealii;
 
 	template<int dim>
-	class HeatEquation
-	{
-	public:
-		HeatEquation();
-		void increment_time();
-		void run();
+		class HeatEquation
+		{
+		public:
+			HeatEquation();
+			void increment_time();
+			void run();
 
-	private:
-		void setup_system();
-		double solve_time_step();
-		void create_grid();
-		void output_results() const;
-		void assemble_system();
+		private:
+			void setup_system();
+			double solve_time_step();
+			void create_grid();
+			void output_results() const;
+			void assemble_system();
+			void make_dirichlet_boundary_conditions();
 
-		MPI_Comm mpi_communicator;
-		const unsigned int n_mpi_processes;
-		const unsigned int this_mpi_process;
+			MPI_Comm mpi_communicator;
+			const unsigned int n_mpi_processes;
+			const unsigned int this_mpi_process;
 
-		ConditionalOStream pcout;
+			ConditionalOStream pcout;
 
-		parallel::shared::Triangulation<dim> triangulation;
-		FE_Q<dim>            fe;
-		DoFHandler<dim>      dof_handler;
+			parallel::shared::Triangulation<dim> triangulation;
+			FE_Q<dim>            fe;
+			DoFHandler<dim>      dof_handler;
 
-		ConstraintMatrix     constraints;
+			ConstraintMatrix     constraints;
 
-		PETScWrappers::MPI::SparseMatrix system_matrix;
+			PETScWrappers::MPI::SparseMatrix system_matrix;
 
-		Vector<double>                   solution;
-		PETScWrappers::MPI::Vector       system_rhs;
+			Vector<double>                   solution;
+			PETScWrappers::MPI::Vector       system_rhs;
 
-		IndexSet locally_owned_dofs;
-		IndexSet locally_relevant_dofs;
-		std::vector<types::global_dof_index> local_dofs_per_process;
-		unsigned int n_local_cells;
+			IndexSet locally_owned_dofs;
+			IndexSet locally_relevant_dofs;
+			std::vector<types::global_dof_index> local_dofs_per_process;
+			unsigned int n_local_cells;
 
-		double               time = 0;
-		double               time_step = 60;
-		unsigned int         timestep_number = 0;
-		const double         theta = 0.5;
-	}
-	;
+			double               time = 0;
+			double               time_step = 60;
+			unsigned int         timestep_number = 0;
+			const double         theta = 0.5;
+		}
+		;
 
 
 	template <int dim>
-	void HeatEquation<dim>::increment_time()
-	{
-		timestep_number++;
-		time += time_step;
-	}
+		void HeatEquation<dim>::increment_time()
+		{
+			timestep_number++;
+			time += time_step;
+		}
 
 	template<int dim>
 		void HeatEquation<dim>::create_grid()
 		{
-			const double size = 0.1;  	// meter
+			const double size = 0.1;   	// meter
 			GridGenerator::hyper_cube(triangulation, 0, size, true);
-			triangulation.refine_global(6);
+			triangulation.refine_global(5);
 		}
 
 
@@ -157,7 +158,9 @@ namespace DistributedHE
 
 			constraints.clear();
 			DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+			make_dirichlet_boundary_conditions();
 			constraints.close();
+
 
 			DynamicSparsityPattern dsp(locally_relevant_dofs);
 			DoFTools::make_sparsity_pattern(dof_handler, dsp, constraints, /*keep_constrained_dofs = */ false);
@@ -165,6 +168,8 @@ namespace DistributedHE
 				local_dofs_per_process,
 				mpi_communicator,
 				locally_relevant_dofs);
+
+
 
 				
 			system_matrix.reinit(locally_owned_dofs, locally_owned_dofs, dsp, mpi_communicator);
@@ -187,16 +192,16 @@ namespace DistributedHE
 			                       + "." + Utilities::int_to_string(this_mpi_process, 3)
 			                       + ".vtu";
 
-				std::ofstream output(filename.c_str());
-				DataOut<dim> data_out;
-				data_out.attach_dof_handler(dof_handler);
-				data_out.add_data_vector(solution, "Temperature");
-				std::vector<unsigned int> partition_int(triangulation.n_active_cells());
-				GridTools::get_subdomain_association(triangulation, partition_int);
-				const Vector<double> partitioning(partition_int.begin(), partition_int.end());
-				data_out.add_data_vector(partitioning, "Partitioning");
-				data_out.build_patches();
-				data_out.write_vtu(output);
+			std::ofstream output(filename.c_str());
+			DataOut<dim> data_out;
+			data_out.attach_dof_handler(dof_handler);
+			data_out.add_data_vector(solution, "Temperature");
+			std::vector<unsigned int> partition_int(triangulation.n_active_cells());
+			GridTools::get_subdomain_association(triangulation, partition_int);
+			const Vector<double> partitioning(partition_int.begin(), partition_int.end());
+			data_out.add_data_vector(partitioning, "Partitioning");
+			data_out.build_patches();
+			data_out.write_vtu(output);
 
 			if (this_mpi_process == 0)
 			{
@@ -225,9 +230,9 @@ namespace DistributedHE
 		void HeatEquation<dim>::assemble_system()
 		{
 			double temp_env_top = 20;
-			double convection_top = 100;
+			double convection_top = 0;
 			double temp_env_right = 20;
-			double convection_right = 100;
+			double convection_right = 0;
 
 			QGauss<dim> quadrature_formula(2);
 			QGauss<dim - 1> face_quadrature_formula(3);
@@ -340,22 +345,22 @@ namespace DistributedHE
 					std::vector<double> local_values(dofs_per_cell);
 					fe_values.get_function_values(solution, local_values);
 
-//					std::vector<double> local_values(dofs_per_cell);
-//					cell_fe_values.get_function_values(solution, local_values);
-//					
-//					Vector<double> local_values(dofs_per_cell);
-//					cell->get_dof_values(solution, local_values);
+					//	std::vector<double> local_values(dofs_per_cell);
+					//	cell_fe_values.get_function_values(solution, local_values);
+					//					
+					//	Vector<double> local_values(dofs_per_cell);
+					//	cell->get_dof_values(solution, local_values);
 
-					for(unsigned int i = 0 ; i < dofs_per_cell ; ++i) {
+										for(unsigned int i = 0 ; i < dofs_per_cell ; ++i) {
 						for (unsigned int j = 0; j < dofs_per_cell; ++j) {
 							// Galerkin
 							double t0 = local_values[j];
-							//cellA(i, j) += 2.0 * cellH(i,j) + (3.0/timeStep) * cellC(i,j) + cellHq(i,j);	
-							//cellRhs(i) += (-cellH(i,j) + (3.0/timeStep) * cellC(i,j)) * t0;
+//							cell_a(i, j) += 2.0 * cell_h(i,j) + (3.0/time_step) * cell_c(i,j) + cell_hq(i,j);	
+//							cell_rhs(i) += (-cell_h(i,j) + (3.0/time_step) * cell_c(i,j)) * t0;
 
 							// Crank-Nicolson
-							//cellA(i, j) += cellH(i,j) + 2.0*cellC(i,j)/timeStep + cellHq(i,j);	
-							//cellRhs(i) += (-cellH(i,j) + 2.0*cellC(i,j)/timeStep) * t0;				
+							//cell_a(i, j) += cell_h(i, j) + 2.0*cell_c(i, j) / time_step + cell_hq(i, j);	
+							//cell_rhs(i) += (-cell_h(i, j) + 2.0*cell_c(i, j) / time_step) * t0;				
 
 							// Euler
 							cell_a(i, j) += cell_h(i, j) + cell_hq(i, j) + cell_c(i, j) / time_step;
@@ -363,10 +368,10 @@ namespace DistributedHE
 						}
 
 						// Galerkin
-						//cellRhs(i) += 3.0 * cellP(i);
+//						cell_rhs(i) += 3.0 * cell_p(i);
 
 						// Crank-Nicolson
-						// cellRhs(i) += 2.0 * cellP(i);
+						//cell_rhs(i) += 2.0 * cell_p(i);
 
 						//Euler
 						cell_rhs(i) += cell_p(i);
@@ -385,6 +390,13 @@ namespace DistributedHE
 
 		}
 
+	template <int dim>
+	void HeatEquation<dim>::make_dirichlet_boundary_conditions()
+	{
+		VectorTools::interpolate_boundary_values(dof_handler, 2, ConstantFunction<dim>(20), constraints);
+		VectorTools::interpolate_boundary_values(dof_handler, 3, ConstantFunction<dim>(20), constraints);
+	}
+
 	template<int dim>
 		double HeatEquation<dim>::solve_time_step()
 		{
@@ -395,8 +407,9 @@ namespace DistributedHE
 			PETScWrappers::SolverCG cg(solver_control, mpi_communicator);
 			PETScWrappers::PreconditionBlockJacobi preconditioner(system_matrix);
 			cg.solve(system_matrix, distributed_solution, system_rhs, preconditioner);
+			constraints.distribute(distributed_solution);
 			solution = distributed_solution;
-			constraints.distribute(solution);
+			
 			return solver_control.last_step();
 		}
 
